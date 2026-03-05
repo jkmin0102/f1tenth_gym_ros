@@ -1,0 +1,86 @@
+from launch import LaunchDescription
+from launch.actions import ExecuteProcess, TimerAction
+from launch_ros.actions import Node
+from launch.substitutions import Command, PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+def generate_launch_description():
+    sim_yaml = "/sim_ws/src/f1tenth_gym_ros/config/sim.yaml"
+    map_yaml = "/racetracks_host/Budapest/Budapest_map.yaml"
+    rviz_cfg = "/sim_ws/src/f1tenth_gym_ros/config/budapest.rviz"
+
+    xacro_file = "/sim_ws/install/f1tenth_gym_ros/share/f1tenth_gym_ros/launch/ego_racecar.xacro"
+
+    # xacro -> robot_description (as a command substitution)
+    robot_description_cmd = ["xacro", xacro_file]
+    # 1) gym bridge (node name must match sim.yaml top key 'bridge')
+    gym_bridge = Node(
+        package="f1tenth_gym_ros",
+        executable="gym_bridge",
+        name="bridge",
+        output="screen",
+        parameters=[sim_yaml],
+    )
+
+    # 2) map_server (nav2)
+    map_server = Node(
+        package="nav2_map_server",
+        executable="map_server",
+        name="map_server",
+        output="screen",
+        parameters=[{"yaml_filename": map_yaml}],
+    )
+
+    # 3) lifecycle activate map_server
+    map_server_activate = ExecuteProcess(
+        cmd=["ros2", "lifecycle", "set", "/map_server", "configure"],
+        output="screen",
+    )
+    map_server_activate2 = ExecuteProcess(
+        cmd=["ros2", "lifecycle", "set", "/map_server", "activate"],
+        output="screen",
+    )
+
+    # 4) robot_state_publisher (publish /tf_static + robot_description param)
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="ego_robot_state_publisher",
+        output="screen",
+        parameters=[{
+            "robot_description": robot_description_cmd,
+            "use_tf_static": True
+        }],
+    )
+
+    # 5) odom_to_tf (only needed if you still want map->base_link broadcast from odom)
+    odom_to_tf = Node(
+        package="control",
+        executable="odom_to_tf",
+        name="odom_to_tf",
+        output="screen",
+        parameters=[{
+            "odom_topic": "/ego_racecar/odom",
+            "parent_frame": "map",
+            "child_frame": "ego_racecar/base_link"
+        }]
+    )
+
+    # 6) RViz
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_cfg],
+    )
+
+    return LaunchDescription([
+        robot_state_publisher,
+        map_server,
+        map_server_activate,
+        map_server_activate2,
+        gym_bridge,
+        odom_to_tf,
+        rviz
+    ])
